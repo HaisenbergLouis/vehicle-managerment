@@ -1,0 +1,9 @@
+com\example\dispatch\service\DispatchService.class
+com\example\dispatch\model\Vehicle.class
+com\example\dispatch\dao\TaskDAO.class
+com\example\dispatch\MainApp.class
+com\example\dispatch\model\Task.class
+com\example\dispatch\dao\VehicleDAO.class
+com\example\dispatch\database\DatabaseManager.class
+com\example\dispatch\util\DataStore.class
+com\example\dispatch\view\MainView.class
