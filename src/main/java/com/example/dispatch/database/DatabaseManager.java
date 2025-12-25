@@ -1,5 +1,8 @@
 package com.example.dispatch.database;
 
+import com.example.dispatch.util.PasswordUtils;
+import com.example.dispatch.util.UserRoles;
+
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.SQLException;
@@ -51,8 +54,10 @@ public class DatabaseManager {
                         driver VARCHAR(50) NOT NULL,
                         status VARCHAR(20) NOT NULL DEFAULT '空闲',
                         location VARCHAR(100) NOT NULL DEFAULT '未知',
+                        created_by INT,
                         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+                        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                        FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL
                     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
                     """;
 
@@ -65,9 +70,11 @@ public class DatabaseManager {
                         eta TIMESTAMP NOT NULL,
                         vehicle_id VARCHAR(20),
                         status VARCHAR(20) NOT NULL DEFAULT '待分配',
+                        created_by INT,
                         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-                        FOREIGN KEY (vehicle_id) REFERENCES vehicles(id) ON DELETE SET NULL
+                        FOREIGN KEY (vehicle_id) REFERENCES vehicles(id) ON DELETE SET NULL,
+                        FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL
                     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
                     """;
 
@@ -169,6 +176,16 @@ public class DatabaseManager {
                     "('送货-1', '市中心', DATE_ADD(NOW(), INTERVAL 2 HOUR), '待分配'), " +
                     "('接人-1', '火车站', DATE_ADD(NOW(), INTERVAL 1 HOUR), '待分配')");
             System.out.println("已插入默认任务数据");
+        }
+
+        // 检查用户表是否为空，如果为空则创建默认管理员账户
+        rs = stmt.executeQuery("SELECT COUNT(*) FROM users");
+        if (rs.next() && rs.getInt(1) == 0) {
+            // 插入默认管理员用户（密码：admin123）
+            String adminPasswordHash = PasswordUtils.hashPassword("admin123");
+            stmt.execute("INSERT INTO users (username, password_hash, role) VALUES " +
+                    "('admin', '" + adminPasswordHash + "', '" + UserRoles.ADMIN + "')");
+            System.out.println("已创建默认管理员账户：admin / admin123");
         }
     }
 

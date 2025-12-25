@@ -48,11 +48,32 @@ public class VehicleDAO {
     }
 
     /**
+     * 根据创建者查找车辆
+     */
+    public List<Vehicle> findByCreatedBy(int createdBy) throws SQLException {
+        List<Vehicle> vehicles = new ArrayList<>();
+        String sql = "SELECT * FROM vehicles WHERE created_by = ? ORDER BY id";
+
+        try (Connection conn = DatabaseManager.getConnection();
+                PreparedStatement stmt = conn.prepareStatement(sql)) {
+
+            stmt.setInt(1, createdBy);
+            try (ResultSet rs = stmt.executeQuery()) {
+                while (rs.next()) {
+                    Vehicle vehicle = mapResultSetToVehicle(rs);
+                    vehicles.add(vehicle);
+                }
+            }
+        }
+        return vehicles;
+    }
+
+    /**
      * 根据状态查找车辆
      */
     public List<Vehicle> findByStatus(String status) throws SQLException {
         List<Vehicle> vehicles = new ArrayList<>();
-        String sql = "SELECT * FROM vehicles WHERE status = ? ORDER BY id";
+        String sql = "SELECT * FROM vehicles WHERE status = ?";
 
         try (Connection conn = DatabaseManager.getConnection();
                 PreparedStatement stmt = conn.prepareStatement(sql)) {
@@ -83,21 +104,45 @@ public class VehicleDAO {
      * 插入新车辆
      */
     public void insert(Vehicle vehicle) throws SQLException {
-        String sql = "INSERT INTO vehicles (id, driver, status, location) VALUES (?, ?, ?, ?)";
+        // 首先尝试使用新字段，如果失败则使用旧字段
+        String sql = "INSERT INTO vehicles (id, driver, status, location, created_by) VALUES (?, ?, ?, ?, ?)";
+        boolean useOldFormat = false;
 
-        try (Connection conn = DatabaseManager.getConnection();
-                PreparedStatement stmt = conn.prepareStatement(sql)) {
-
-            stmt.setString(1, vehicle.getId());
-            stmt.setString(2, vehicle.getDriver());
-            stmt.setString(3, vehicle.getStatus());
-            stmt.setString(4, vehicle.getLocation());
-
-            stmt.executeUpdate();
-
-            // 记录操作日志
-            logOperation("INSERT", "VEHICLE", vehicle.getId(), "新增车辆: " + vehicle.getId());
+        try (Connection conn = DatabaseManager.getConnection()) {
+            try (PreparedStatement stmt = conn.prepareStatement(sql)) {
+                stmt.setString(1, vehicle.getId());
+                stmt.setString(2, vehicle.getDriver());
+                stmt.setString(3, vehicle.getStatus());
+                stmt.setString(4, vehicle.getLocation());
+                stmt.setInt(5, vehicle.getCreatedBy());
+                stmt.executeUpdate();
+            }
+        } catch (SQLException e) {
+            // 如果新字段不存在，回退到旧格式
+            if (e.getMessage().contains("created_by")) {
+                useOldFormat = true;
+            } else {
+                throw e;
+            }
         }
+
+        // 使用旧格式插入
+        if (useOldFormat) {
+            String oldSql = "INSERT INTO vehicles (id, driver, status, location) VALUES (?, ?, ?, ?)";
+            try (Connection conn = DatabaseManager.getConnection();
+                    PreparedStatement stmt = conn.prepareStatement(oldSql)) {
+
+                stmt.setString(1, vehicle.getId());
+                stmt.setString(2, vehicle.getDriver());
+                stmt.setString(3, vehicle.getStatus());
+                stmt.setString(4, vehicle.getLocation());
+
+                stmt.executeUpdate();
+            }
+        }
+
+        // 记录操作日志
+        logOperation("INSERT", "VEHICLE", vehicle.getId(), "新增车辆: " + vehicle.getId());
     }
 
     /**
@@ -131,6 +176,7 @@ public class VehicleDAO {
                 PreparedStatement stmt = conn.prepareStatement(sql)) {
 
             stmt.setString(1, id);
+
             stmt.executeUpdate();
 
             // 记录操作日志
@@ -142,19 +188,8 @@ public class VehicleDAO {
      * 批量保存车辆
      */
     public void saveAll(List<Vehicle> vehicles) throws SQLException {
-        try (Connection conn = DatabaseManager.getConnection()) {
-            conn.setAutoCommit(false);
-            try {
-                for (Vehicle vehicle : vehicles) {
-                    save(vehicle);
-                }
-                conn.commit();
-            } catch (SQLException e) {
-                conn.rollback();
-                throw e;
-            } finally {
-                conn.setAutoCommit(true);
-            }
+        for (Vehicle vehicle : vehicles) {
+            save(vehicle);
         }
     }
 
@@ -176,11 +211,11 @@ public class VehicleDAO {
     }
 
     /**
-     * 获取各状态车辆数量统计
+     * 获取状态统计
      */
     public java.util.Map<String, Integer> getStatusCount() throws SQLException {
-        String sql = "SELECT status, COUNT(*) as count FROM vehicles GROUP BY status";
         java.util.Map<String, Integer> statusCount = new java.util.HashMap<>();
+        String sql = "SELECT status, COUNT(*) as count FROM vehicles GROUP BY status";
 
         try (Connection conn = DatabaseManager.getConnection();
                 PreparedStatement stmt = conn.prepareStatement(sql);
@@ -193,15 +228,29 @@ public class VehicleDAO {
         return statusCount;
     }
 
-    /**
-     * ResultSet映射为Vehicle对象
-     */
     private Vehicle mapResultSetToVehicle(ResultSet rs) throws SQLException {
-        return new Vehicle(
-                rs.getString("id"),
-                rs.getString("driver"),
-                rs.getString("status"),
-                rs.getString("location"));
+        try {
+            // 尝试读取created_by字段，如果不存在则使用默认值0
+            int createdBy = 0;
+            try {
+                createdBy = rs.getInt("created_by");
+                if (rs.wasNull()) {
+                    createdBy = 0;
+                }
+            } catch (SQLException e) {
+                // 字段不存在，使用默认值
+                createdBy = 0;
+            }
+
+            return new Vehicle(
+                    rs.getString("id"),
+                    rs.getString("driver"),
+                    rs.getString("status"),
+                    rs.getString("location"),
+                    createdBy);
+        } catch (SQLException e) {
+            throw new SQLException("读取车辆数据失败: " + e.getMessage(), e);
+        }
     }
 
     /**
@@ -218,9 +267,11 @@ public class VehicleDAO {
                 stmt.setString(2, entityType);
                 stmt.setString(3, entityId);
                 stmt.setString(4, description);
+
                 stmt.executeUpdate();
             }
         } catch (SQLException e) {
+            // 日志记录失败不影响主要操作
             System.err.println("记录操作日志失败: " + e.getMessage());
         }
     }

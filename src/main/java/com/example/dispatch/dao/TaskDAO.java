@@ -54,6 +54,27 @@ public class TaskDAO {
     }
 
     /**
+     * 根据创建者查找任务
+     */
+    public List<Task> findByCreatedBy(int createdBy) throws SQLException {
+        List<Task> tasks = new ArrayList<>();
+        String sql = "SELECT * FROM tasks WHERE created_by = ? ORDER BY created_at DESC";
+
+        try (Connection conn = DatabaseManager.getConnection();
+                PreparedStatement stmt = conn.prepareStatement(sql)) {
+
+            stmt.setInt(1, createdBy);
+            try (ResultSet rs = stmt.executeQuery()) {
+                while (rs.next()) {
+                    Task task = mapResultSetToTask(rs);
+                    tasks.add(task);
+                }
+            }
+        }
+        return tasks;
+    }
+
+    /**
      * 根据状态查找任务
      */
     public List<Task> findByStatus(String status) throws SQLException {
@@ -110,22 +131,47 @@ public class TaskDAO {
      * 插入新任务
      */
     public void insert(Task task) throws SQLException {
-        String sql = "INSERT INTO tasks (name, destination, eta, vehicle_id, status) VALUES (?, ?, ?, ?, ?)";
+        // 首先尝试使用新字段，如果失败则使用旧字段
+        String sql = "INSERT INTO tasks (name, destination, eta, vehicle_id, status, created_by) VALUES (?, ?, ?, ?, ?, ?)";
+        boolean useOldFormat = false;
 
-        try (Connection conn = DatabaseManager.getConnection();
-                PreparedStatement stmt = conn.prepareStatement(sql)) {
-
-            stmt.setString(1, task.getName());
-            stmt.setString(2, task.getDestination());
-            stmt.setString(3, task.getEta().format(DateTimeFormatter.ISO_LOCAL_DATE_TIME));
-            stmt.setString(4, task.getVehicleId());
-            stmt.setString(5, "待分配"); // 新任务默认状态
-
-            stmt.executeUpdate();
-
-            // 记录操作日志
-            logOperation("INSERT", "TASK", task.getName(), "新增任务: " + task.getName());
+        try (Connection conn = DatabaseManager.getConnection()) {
+            try (PreparedStatement stmt = conn.prepareStatement(sql)) {
+                stmt.setString(1, task.getName());
+                stmt.setString(2, task.getDestination());
+                stmt.setString(3, task.getEta().format(DateTimeFormatter.ISO_LOCAL_DATE_TIME));
+                stmt.setString(4, task.getVehicleId());
+                stmt.setString(5, "待分配"); // 新任务默认状态
+                stmt.setInt(6, task.getCreatedBy());
+                stmt.executeUpdate();
+            }
+        } catch (SQLException e) {
+            // 如果新字段不存在，回退到旧格式
+            if (e.getMessage().contains("created_by")) {
+                useOldFormat = true;
+            } else {
+                throw e;
+            }
         }
+
+        // 使用旧格式插入
+        if (useOldFormat) {
+            String oldSql = "INSERT INTO tasks (name, destination, eta, vehicle_id, status) VALUES (?, ?, ?, ?, ?)";
+            try (Connection conn = DatabaseManager.getConnection();
+                    PreparedStatement stmt = conn.prepareStatement(oldSql)) {
+
+                stmt.setString(1, task.getName());
+                stmt.setString(2, task.getDestination());
+                stmt.setString(3, task.getEta().format(DateTimeFormatter.ISO_LOCAL_DATE_TIME));
+                stmt.setString(4, task.getVehicleId());
+                stmt.setString(5, "待分配"); // 新任务默认状态
+
+                stmt.executeUpdate();
+            }
+        }
+
+        // 记录操作日志
+        logOperation("INSERT", "TASK", task.getName(), "新增任务: " + task.getName());
     }
 
     /**
@@ -281,12 +327,29 @@ public class TaskDAO {
      * ResultSet映射为Task对象
      */
     private Task mapResultSetToTask(ResultSet rs) throws SQLException {
-        Task task = new Task(
-                rs.getString("name"),
-                rs.getString("destination"),
-                LocalDateTime.parse(rs.getString("eta"), MYSQL_DATETIME_FORMATTER));
-        task.assignVehicle(rs.getString("vehicle_id"));
-        return task;
+        try {
+            // 尝试读取created_by字段，如果不存在则使用默认值0
+            int createdBy = 0;
+            try {
+                createdBy = rs.getInt("created_by");
+                if (rs.wasNull()) {
+                    createdBy = 0;
+                }
+            } catch (SQLException e) {
+                // 字段不存在，使用默认值
+                createdBy = 0;
+            }
+
+            Task task = new Task(
+                    rs.getString("name"),
+                    rs.getString("destination"),
+                    LocalDateTime.parse(rs.getString("eta"), MYSQL_DATETIME_FORMATTER),
+                    createdBy);
+            task.assignVehicle(rs.getString("vehicle_id"));
+            return task;
+        } catch (SQLException e) {
+            throw new SQLException("读取任务数据失败: " + e.getMessage(), e);
+        }
     }
 
     /**
